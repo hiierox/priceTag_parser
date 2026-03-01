@@ -18,7 +18,10 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import com.pricetag.parser.data.InMemoryRepository
+import androidx.room.Room
+import com.pricetag.parser.data.AppDatabase
+import com.pricetag.parser.data.ParsedDraft
+import com.pricetag.parser.data.RoomRepository
 import com.pricetag.parser.ui.CameraScreen
 import com.pricetag.parser.ui.ConfirmScreen
 import com.pricetag.parser.ui.HistoryScreen
@@ -41,8 +44,20 @@ private enum class AppRoute(val route: String, val label: String) {
 @Composable
 private fun PriceTagApp() {
     val navController = rememberNavController()
-    val repo = remember { InMemoryRepository() }
-    var activeSessionId by remember { mutableStateOf(repo.startSession().id) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val db = remember {
+        Room.databaseBuilder(context, AppDatabase::class.java, "price_tag.db")
+            .fallbackToDestructiveMigration()
+            .allowMainThreadQueries()
+            .build()
+    }
+    val repo = remember { RoomRepository(db.scanDao()) }
+    var activeSessionId by remember {
+        mutableStateOf(
+            repo.sessions().firstOrNull()?.id ?: repo.startSession().id,
+        )
+    }
+    var latestDraft by remember { mutableStateOf<ParsedDraft?>(null) }
 
     Scaffold(
         bottomBar = {
@@ -52,7 +67,12 @@ private fun PriceTagApp() {
                 AppRoute.entries.forEach { route ->
                     NavigationBarItem(
                         selected = currentRoute == route.route,
-                        onClick = { navController.navigate(route.route) },
+                        onClick = {
+                            navController.navigate(route.route)
+                            if (route == AppRoute.History) {
+                                repo.refresh()
+                            }
+                        },
                         label = { Text(route.label) },
                         icon = {},
                     )
@@ -71,11 +91,13 @@ private fun PriceTagApp() {
                     onStartNewSession = {
                         activeSessionId = repo.startSession().id
                     },
+                    onDraftReady = { latestDraft = it },
                     activeSessionId = activeSessionId,
                 )
             }
             composable(AppRoute.Confirm.route) {
                 ConfirmScreen(
+                    draft = latestDraft,
                     onSave = { name, price, pricePerKg, weightVolume ->
                         repo.addItem(
                             sessionId = activeSessionId,
