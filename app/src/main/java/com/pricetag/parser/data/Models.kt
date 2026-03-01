@@ -18,3 +18,11 @@ data class ScanItem(
     val confirmedManually: Boolean,
     val createdAt: Instant,
 )
+
+data class ParsedDraft(
+    val productName: String,
+    val priceRaw: String,
+    val pricePerKgRaw: String,
+    val weightVolumeRaw: String,
+    val sourceText: String,
+)
