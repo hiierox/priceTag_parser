@@ -3,7 +3,7 @@ package com.pricetag.parser.data
 import kotlin.math.ceil
 
 private const val MAX_PRICE = 100_000
-private val WEIGHT_VOLUME_PATTERN = Regex("""^(\d+(?:[.,]\d+)?)\s?(г|кг|мл|л)$""")
+private val WEIGHT_VOLUME_PATTERN = Regex("""^(\d+(?:[.,]\d+)?)\s?(г|кг|мл|л|шт)$""")
 
 object FieldParser {
     fun parsePrice(raw: String): Int? {
@@ -37,7 +37,11 @@ object FieldParser {
             .replace("граммов", "г")
             .replace("грамма", "г")
             .replace("грамм", "г")
+            .replace("штук", "шт")
+            .replace("штука", "шт")
+            .replace("штуки", "шт")
             .replace("гр", "г")
+            .replace("шт.", "шт")
             .replace(Regex("\\s+"), " ")
 
         val match = WEIGHT_VOLUME_PATTERN.matchEntire(normalized) ?: return normalized

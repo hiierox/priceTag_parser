@@ -2,6 +2,8 @@ package com.pricetag.parser.data
 
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.snapshots.SnapshotStateList
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.util.UUID
 
@@ -11,51 +13,64 @@ class RoomRepository(
     private val sessionsState = mutableStateListOf<ScanSession>()
     private val itemsState = mutableStateListOf<ScanItem>()
 
-    init {
-        refresh()
-    }
-
     fun sessions(): SnapshotStateList<ScanSession> = sessionsState
 
     fun items(): SnapshotStateList<ScanItem> = itemsState
 
-    fun startSession(): ScanSession {
+    suspend fun startSession(): ScanSession = withContext(Dispatchers.IO) {
         val session = ScanSession(
             id = UUID.randomUUID().toString(),
             startedAt = Instant.now(),
         )
         dao.insertSession(session.toEntity())
+        session
+    }.also {
         refresh()
-        return session
     }
 
-    fun addItem(
+    fun itemsForSession(sessionId: String?): List<ScanItem> =
+        if (sessionId == null) {
+            itemsState.toList()
+        } else {
+            itemsState.filter { it.sessionId == sessionId }
+        }
+
+    suspend fun addItem(
         sessionId: String,
         productName: String,
         price: Int,
         pricePerKg: Int?,
         weightOrVolume: String,
     ) {
-        val item = ScanItem(
-            id = UUID.randomUUID().toString(),
-            sessionId = sessionId,
-            productName = productName,
-            price = price,
-            pricePerKg = pricePerKg,
-            weightOrVolume = weightOrVolume,
-            confirmedManually = true,
-            createdAt = Instant.now(),
-        )
-        dao.insertItem(item.toEntity())
+        withContext(Dispatchers.IO) {
+            val item = ScanItem(
+                id = UUID.randomUUID().toString(),
+                sessionId = sessionId,
+                productName = productName,
+                price = price,
+                pricePerKg = pricePerKg,
+                weightOrVolume = weightOrVolume,
+                confirmedManually = true,
+                createdAt = Instant.now(),
+            )
+            dao.insertItem(item.toEntity())
+        }
         refresh()
     }
 
-    fun refresh() {
+    suspend fun refresh() {
+        val sessions = withContext(Dispatchers.IO) {
+            dao.getSessions().map { it.toModel() }
+        }
+        val items = withContext(Dispatchers.IO) {
+            dao.getItems().map { it.toModel() }
+        }
+
         sessionsState.clear()
-        sessionsState.addAll(dao.getSessions().map { it.toModel() })
+        sessionsState.addAll(sessions)
 
         itemsState.clear()
-        itemsState.addAll(dao.getItems().map { it.toModel() })
+        itemsState.addAll(items)
     }
 }
 
