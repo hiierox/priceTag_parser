@@ -55,6 +55,7 @@ class FieldParserTest {
         assertTrue(FieldParser.isValidWeightVolume("1,5 кг"))
         assertTrue(FieldParser.isValidWeightVolume("900 миллилитр"))
         assertFalse(FieldParser.isValidWeightVolume("пачка"))
-        assertFalse(FieldParser.isValidWeightVolume("2 шт"))
+        assertTrue(FieldParser.isValidWeightVolume("2 шт"))
+        assertTrue(FieldParser.isValidWeightVolume("55шт"))
     }
 }

@@ -21,9 +21,10 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -39,9 +40,12 @@ import androidx.core.content.ContextCompat
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import com.pricetag.parser.data.LiveOcrStabilizer
 import com.pricetag.parser.data.OcrDraftParser
 import com.pricetag.parser.data.ParsedDraft
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 @Composable
 fun CameraScreen(
@@ -59,8 +63,12 @@ fun CameraScreen(
         )
     }
     var latestRecognizedText by remember { mutableStateOf<String?>(null) }
-    var analysisRunning by remember { mutableStateOf(false) }
-    var lastAnalyzedMs by remember { mutableLongStateOf(0L) }
+    var stabilizationConfidence by remember { mutableFloatStateOf(0f) }
+    var stabilizationStreak by remember { mutableIntStateOf(0) }
+
+    val stabilizer = remember { LiveOcrStabilizer() }
+    val analysisRunning = remember { AtomicBoolean(false) }
+    val lastAnalyzedMs = remember { AtomicLong(0L) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -93,6 +101,7 @@ fun CameraScreen(
                     val previewView = PreviewView(ctx)
                     val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
                     val executor = Executors.newSingleThreadExecutor()
+                    val mainExecutor = ContextCompat.getMainExecutor(ctx)
                     val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
 
                     cameraProviderFuture.addListener({
@@ -104,7 +113,7 @@ fun CameraScreen(
                         val analysis = ImageAnalysis.Builder().build().also { analyzer ->
                             analyzer.setAnalyzer(executor) { imageProxy ->
                                 val now = System.currentTimeMillis()
-                                if (analysisRunning || now - lastAnalyzedMs < 1500L) {
+                                if (analysisRunning.get() || now - lastAnalyzedMs.get() < 1500L) {
                                     imageProxy.close()
                                     return@setAnalyzer
                                 }
@@ -115,19 +124,29 @@ fun CameraScreen(
                                     return@setAnalyzer
                                 }
 
-                                analysisRunning = true
+                                if (!analysisRunning.compareAndSet(false, true)) {
+                                    imageProxy.close()
+                                    return@setAnalyzer
+                                }
+
                                 val input = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
                                 recognizer.process(input)
-                                    .addOnSuccessListener { visionText ->
+                                    .addOnSuccessListener(mainExecutor) { visionText ->
                                         val text = visionText.text.trim()
                                         if (text.isNotEmpty()) {
                                             latestRecognizedText = text
-                                            onDraftReady(OcrDraftParser.fromRecognizedText(text))
+                                            val draft = OcrDraftParser.fromRecognizedText(text)
+                                            val result = stabilizer.update(draft)
+                                            stabilizationConfidence = result.confidence
+                                            stabilizationStreak = result.streak
+                                            if (result.isStable) {
+                                                onDraftReady(result.draft)
+                                            }
                                         }
                                     }
-                                    .addOnCompleteListener {
-                                        lastAnalyzedMs = System.currentTimeMillis()
-                                        analysisRunning = false
+                                    .addOnCompleteListener(mainExecutor) {
+                                        lastAnalyzedMs.set(System.currentTimeMillis())
+                                        analysisRunning.set(false)
                                         imageProxy.close()
                                     }
                             }
@@ -140,7 +159,7 @@ fun CameraScreen(
                             preview,
                             analysis,
                         )
-                    }, ContextCompat.getMainExecutor(ctx))
+                    }, mainExecutor)
 
                     previewView
                 },
@@ -161,6 +180,10 @@ fun CameraScreen(
             text = "Последний OCR: ${latestRecognizedText?.take(120) ?: "—"}",
             style = MaterialTheme.typography.bodySmall,
         )
+        Text(
+            text = "Стабилизация: ${(stabilizationConfidence * 100).toInt()}% (совпадений подряд: $stabilizationStreak)",
+            style = MaterialTheme.typography.bodySmall,
+        )
 
         Button(onClick = onOpenConfirm) {
             Text("Открыть экран подтверждения")
@@ -169,9 +192,5 @@ fun CameraScreen(
         Button(onClick = onStartNewSession) {
             Text("Начать новую сессию")
         }
-    }
-
-    DisposableEffect(Unit) {
-        onDispose { }
     }
 }
